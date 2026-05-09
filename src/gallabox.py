@@ -19,6 +19,10 @@ Env vars consumed:
 CLI usage:
   python gallabox.py list_open_unassigned [--limit 100]
   python gallabox.py messages <conversation_id> [--limit 10]
+  python gallabox.py thread <conversation_id> [--limit 10]
+       # full recent WhatsApp thread oldest->newest with media URLs surfaced
+  python gallabox.py download_media <media_url> <out_path>
+       # downloads attachment so Sara can Read it (vision-enabled)
   python gallabox.py send <conversation_id> <e164_phone> <body>
   python gallabox.py assign <conversation_id> <user_id>
   python gallabox.py last_actionable <conversation_id>
@@ -179,6 +183,65 @@ def send(cid: str, phone: str, body: str) -> dict:
     return _request("/messages/whatsapp", method="POST", body=payload)
 
 
+def _extract_media_path(msg: dict) -> str | None:
+    """Return the public Gallabox file URL for an image/document/video, if any."""
+    wa = msg.get("whatsapp") or {}
+    for key in ("image", "document", "video", "audio", "voice"):
+        sub = wa.get(key)
+        if isinstance(sub, dict):
+            path = sub.get("path") or sub.get("url")
+            if path:
+                return path
+    return None
+
+
+def thread(cid: str, limit: int = 10) -> list[dict]:
+    """Return the recent WhatsApp thread oldest->newest with media URLs and
+    role labels, suitable for Sara to reason over before drafting.
+
+    Each row: {message_id, created_at, role ('customer'|'agent'), body,
+               media_type, media_path}. role is best-effort: any whatsapp
+               message with sender == contact._id is 'customer', else 'agent'.
+    """
+    raw = messages(cid, limit=limit)
+    wa = [m for m in raw if m.get("channelType") == "whatsapp"]
+    out: list[dict] = []
+    for m in reversed(wa):  # oldest -> newest
+        body, media_type = _extract_body(m)
+        contact_id = (m.get("contact") or {}).get("_id", "")
+        sender = m.get("sender", "")
+        role = "customer" if sender and contact_id and sender == contact_id else (
+            "customer" if (m.get("whatsapp") or {}).get("from") and not (m.get("user") or m.get("userId")) else "agent"
+        )
+        out.append({
+            "message_id": m.get("_id") or m.get("id"),
+            "created_at": m.get("createdAt") or m.get("created_at"),
+            "role": role,
+            "body": body,
+            "media_type": media_type,
+            "media_path": _extract_media_path(m),
+        })
+    return out
+
+
+def download_media(url: str, out_path: str) -> dict:
+    """Download an attachment from Gallabox files.gallabox.com to disk so
+    Sara can use Read (vision) on the file."""
+    last_err: Exception | None = None
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            with open(out_path, "wb") as f:
+                f.write(data)
+            return {"ok": True, "out_path": out_path, "bytes": len(data)}
+        except Exception as e:
+            last_err = e
+            time.sleep(RETRY_SLEEP_S)
+    return {"ok": False, "error": f"download_failed: {last_err}", "out_path": out_path}
+
+
 def assign(cid: str, user_id: str) -> dict:
     """Assign a conversation. Honours DRY_RUN."""
     dry_run = (os.environ.get("DRY_RUN", "true").lower() == "true")
@@ -211,6 +274,14 @@ def main() -> None:
     s = sub.add_parser("last_actionable")
     s.add_argument("cid")
 
+    s = sub.add_parser("thread")
+    s.add_argument("cid")
+    s.add_argument("--limit", type=int, default=10)
+
+    s = sub.add_parser("download_media")
+    s.add_argument("url")
+    s.add_argument("out_path")
+
     s = sub.add_parser("send")
     s.add_argument("cid")
     s.add_argument("phone")
@@ -229,6 +300,10 @@ def main() -> None:
             _print(messages(args.cid, args.limit))
         elif args.cmd == "last_actionable":
             _print(last_actionable(args.cid))
+        elif args.cmd == "thread":
+            _print(thread(args.cid, args.limit))
+        elif args.cmd == "download_media":
+            _print(download_media(args.url, args.out_path))
         elif args.cmd == "send":
             _print(send(args.cid, args.phone, args.body))
         elif args.cmd == "assign":

@@ -13,13 +13,45 @@ python src/gallabox.py list_open_unassigned --limit 100
 
 ## STEP 2 — for each conversation (cap at MAX_THREADS_PER_TICK = 10)
 
-### a. Fetch the last WhatsApp inbound
+### a. Fetch the recent WhatsApp thread (oldest -> newest, up to 10 msgs)
 
 ```
-python src/gallabox.py last_actionable <cid>
+python src/gallabox.py thread <cid> --limit 10 > /tmp/thread_<cid>.json
 ```
 
-### b. Run the deterministic filter
+This gives you full conversational context — earlier messages, agent
+replies, and any attachments. **Do not draft from the last message
+alone — read the whole thread to understand intent.** A customer who
+says "9 plants" in their last message has likely set the actual intent
+in earlier messages (e.g. "this is for a hotel lobby, here are the
+pots my client picked").
+
+### b. For every attachment in the thread, download and look at it
+
+For each row in the thread JSON where `media_path` is non-null AND
+`media_type` is in (`image`, `document`, `video`):
+
+```
+python src/gallabox.py download_media "<media_path>" "/tmp/<cid>-att<N>.<ext>"
+```
+
+Then use the `Read` tool on the file. You have vision — actually look
+at the image / read the PDF / scan the booth design. Identify what's
+in it. **Never write "image received" or "document received" to the
+customer** (see sara-system.md hard rule 1).
+
+If an image is clearly a supplier-pitch flyer (text-on-background ad,
+"we provide X services", phone numbers + price list, no actual
+product the customer wants from us) → skip with `[SKIP:supplier_pitch]`.
+
+If an image is a product the customer is asking us to identify or
+match (a pot, a plant, a render of a setting) → identify it, then
+proceed to step (d) Shopify lookup with the identified term.
+
+### c. Determine the latest customer message + run the deterministic filter
+
+The newest `role=customer` row in the thread is the message you must
+respond to. Run the text filter on its body:
 
 ```
 python src/filters.py classify "<body>"
@@ -28,7 +60,7 @@ python src/filters.py classify "<body>"
 If `actionable=false`, `supplier_pitch=true`, or `complaint=true`: skip
 and write an audit row with `decision=SKIPPED reason=<...>`.
 
-### c. Sensitive-keyword pre-check
+### c2. Sensitive-keyword pre-check (refund/complaint/etc.)
 
 ```
 python src/qc.py pre_check "<body>"
@@ -38,18 +70,32 @@ If `escalate=true`: assign the conversation to `$ESCALATION_USER_ID`,
 post a Telegram escalate note, write audit
 `decision=QC_SENSITIVE_ESCALATE`. Do NOT draft a reply.
 
-### d. Shopify lookup (if customer asked about a specific product)
+### d. Shopify lookup (if a specific product was mentioned or seen in an attachment)
 
 ```
 python src/shopify.py search "<query>" > /tmp/shopify_<cid>.json
 ```
 
-Use this file when you draft so QC can cross-check prices.
+`<query>` should be the SPECIFIC product Sara identified — either from
+the customer's text OR from looking at an attached image (e.g. "gold
+metallic pot 30cm" or "olive tree 1.0-1.5m"). Use this file when you
+draft so QC can cross-check prices.
 
 ### e. Draft a reply
 
 Follow the rules in `prompt/sara-system.md` "Hard quality rules" and
 quote shipping / hours / payment from `prompt/brand-snippet.md`.
+
+For open-ended B2B/project inquiries (Madushan-style: design PDF +
+"we need plants for an event"), apply hard rule 12 from
+sara-system.md — lead with positioning + ask for specifics, do not
+bridge first.
+
+For project recommendations where the customer has given context but
+no specific plant (Romany-style: "9 plants for a lobby" + lobby
+render images), use Shopify search to recommend a fitting in-stock
+plant (e.g. Areca Palm for indoor lobby, Olive for villa entrance) —
+do NOT just say "let me check with the team".
 
 Write the draft to `/tmp/draft_<cid>.txt`.
 
