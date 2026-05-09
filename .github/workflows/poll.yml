@@ -83,14 +83,13 @@ jobs:
           echo "Cron: '${{ github.event.schedule }}'"
 
       - name: Run Sara (claude-code-action)
-        uses: anthropic-ai/claude-code-action@v1
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Tools: Bash + file IO only. No MCP. All third-party access is
           # routed through the helper scripts in src/.
-          allowed_tools: Bash,Read,Grep,Glob,Write,Edit
           # Hard cap on Claude turns per run — backstop on the per-run timeout.
-          max_turns: 30
+          claude_args: '--allowed-tools Bash,Read,Grep,Glob,Write,Edit --max-turns 30'
           prompt: |
             You are Sara, a courteous WhatsApp sales agent for an
             e-commerce store. This is a single, independent poll run
