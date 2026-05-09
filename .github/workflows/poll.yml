@@ -12,7 +12,7 @@ name: DSC Poller
 on:
   schedule:
     # Every 5 minutes. Adjust to */10 if free-tier minutes become a concern.
-    - cron: '*/5 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       dry_run_override:
@@ -31,7 +31,7 @@ permissions:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
 
     env:
       # --- Gallabox ---
