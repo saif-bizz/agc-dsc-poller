@@ -1,0 +1,111 @@
+name: DSC Poller
+
+# Polls Gallabox for unassigned WhatsApp threads and drafts a reply via
+# claude-code-action. Replaces the prior local /loop runner and the prior
+# Cloudflare worker.
+#
+# Concurrency rule: only one poller run at a time across the whole repo. If
+# a previous run is still going when the cron fires, the new run is queued
+# (NOT cancelled) so we don't lose ticks. Job-level timeout of 4 minutes
+# keeps any single run from blocking the next */5 boundary.
+
+on:
+  schedule:
+    # Every 5 minutes. Adjust to */10 if free-tier minutes become a concern.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run_override:
+        description: 'Override DRY_RUN for this manual run (true/false). Leave blank to use the repo secret.'
+        required: false
+        default: ''
+
+concurrency:
+  group: dsc-poller
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write     # required by claude-code-action
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+
+    env:
+      # --- Gallabox ---
+      GALLABOX_API_KEY: ${{ secrets.GALLABOX_API_KEY }}
+      GALLABOX_API_SECRET: ${{ secrets.GALLABOX_API_SECRET }}
+      GALLABOX_ACCOUNT_ID: ${{ secrets.GALLABOX_ACCOUNT_ID }}
+      GALLABOX_CHANNEL_ID: ${{ secrets.GALLABOX_CHANNEL_ID }}
+      GALLABOX_API_BASE: https://server.gallabox.com/devapi
+
+      # --- Shopify ---
+      SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+      SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
+      SHOPIFY_API_VERSION: '2025-01'
+
+      # --- Telegram ---
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_REVIEW_CHAT_ID: ${{ secrets.TELEGRAM_REVIEW_CHAT_ID }}
+
+      # --- Cloudflare KV (audit log) ---
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+
+      # --- Floor-team escalation user (Gallabox userId) ---
+      ESCALATION_USER_ID: ${{ secrets.ESCALATION_USER_ID }}
+
+      # --- Runtime flags ---
+      # Repo secret default. workflow_dispatch input below can override per-run.
+      DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || secrets.DRY_RUN }}
+      MAX_THREADS_PER_TICK: ${{ secrets.MAX_THREADS_PER_TICK }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Show runtime config (no secrets)
+        run: |
+          echo "DRY_RUN=$DRY_RUN"
+          echo "MAX_THREADS_PER_TICK=$MAX_THREADS_PER_TICK"
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "Cron: '${{ github.event.schedule }}'"
+
+      - name: Run Sara (claude-code-action)
+        uses: anthropic-ai/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Tools: Bash + file IO only. No MCP. All third-party access is
+          # routed through the helper scripts in src/.
+          allowed_tools: Bash,Read,Grep,Glob,Write,Edit
+          # Hard cap on Claude turns per run — backstop on the per-run timeout.
+          max_turns: 30
+          prompt: |
+            You are Sara, a courteous WhatsApp sales agent for an
+            e-commerce store. This is a single, independent poll run
+            triggered by GitHub Actions cron — there is no /loop, no
+            continuation. When this run ends, the runner is destroyed.
+
+            ────────────────────────────────────────────────
+            PRIMARY INSTRUCTION SOURCES (read these first, in order)
+            ────────────────────────────────────────────────
+            1. prompt/sara-system.md   (your persona + conversation rules)
+            2. prompt/brand-snippet.md (customer-facing facts: hours,
+               shipping policy, payment, returns)
+            3. prompt/run-prompt.md    (per-tick workflow you must execute)
+
+            Re-read these every run — do not assume they have not changed.
+
+            Then execute the workflow described in prompt/run-prompt.md
+            exactly. Stop after the [TICK_SUMMARY] line.
