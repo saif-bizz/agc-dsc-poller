@@ -113,13 +113,28 @@ If `pass=false`: redraft once with the hint, re-run QC. Max 3 attempts.
 After 3 fails: post `telegram.py escalate` and write audit
 `decision=QC_BLOCKED`. Do not send.
 
-### g. Re-check the conversation is still unassigned
+### g. Re-check that the customer is still the most recent sender
 
 ```
 python src/gallabox.py last_actionable <cid>
 ```
 
-If the sender is now an internal user, skip — a human picked up.
+The response includes a deterministic `is_internal` boolean.
+
+- **`is_internal: true`** → the most recent message in the thread was sent
+  from our side (a previous Sara reply this run / a previous tick's reply
+  that the customer hasn't responded to / a teammate jumped in mid-tick).
+  **Skip — do NOT send.** Write audit
+  `decision=SKIPPED reason=already_replied_no_customer_followup` and move
+  on to the next CID. This is the loop-prevention guard: a conversation
+  stays in `list_open_unassigned` until someone assigns it, but we must
+  only re-engage once the customer sends a new inbound message.
+
+- **`is_internal: false`** → the customer is still the most recent sender.
+  Proceed to step (h) and send.
+
+Do not interpret the `sender` string yourself — branch on `is_internal`
+only. The Python helper is the source of truth.
 
 ### h. Send the reply
 

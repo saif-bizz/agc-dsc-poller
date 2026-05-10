@@ -146,25 +146,66 @@ def _extract_body(msg: dict) -> tuple[str, str | None]:
     return body, wa_type
 
 
+def _classify_role(msg: dict) -> str:
+    """Deterministic role classification for a Gallabox WhatsApp message.
+
+    Returns 'customer' if the message is inbound from the contact, 'agent'
+    if it's outbound from us (channel/bot send, human teammate reply,
+    template send, etc.). Single source of truth used by both
+    last_actionable() and thread().
+
+    Heuristics, in order:
+      1. sender field == contact._id  -> customer (strong inbound signal)
+      2. whatsapp.from present AND no user/userId field -> customer
+         (covers payloads where contact._id isn't echoed on the message)
+      3. otherwise -> agent (anything dispatched from our side)
+    """
+    contact_id = (msg.get("contact") or {}).get("_id", "")
+    sender = msg.get("sender", "")
+    if sender and contact_id and sender == contact_id:
+        return "customer"
+    wa_from = (msg.get("whatsapp") or {}).get("from")
+    if wa_from and not (msg.get("user") or msg.get("userId")):
+        return "customer"
+    return "agent"
+
+
 def last_actionable(cid: str) -> dict:
-    """Convenience: fetch the last whatsapp inbound message and return
-    { is_inbound, body, media_type, sender, contact_id, raw_message? }.
-    Sara uses this to decide whether to draft."""
+    """Convenience: fetch the most recent whatsapp message in the thread and
+    return a deterministic envelope Sara can branch on without LLM judgment.
+
+    Returns:
+      {
+        message_id, sender, body, media_type, created_at, raw_type,
+        role: 'customer'|'agent',
+        is_internal: bool,   # True when role == 'agent' — Sara's previous
+                             # reply, a teammate's reply, or a template send.
+                             # Step 2.g of run-prompt.md MUST skip drafting
+                             # whenever is_internal is true.
+      }
+    """
     msgs = messages(cid, limit=10)
     wa = [m for m in msgs if m.get("channelType") == "whatsapp"]
     if not wa:
-        return {"is_inbound": False, "body": "", "reason": "no_whatsapp_messages"}
+        return {
+            "is_inbound": False,
+            "is_internal": False,
+            "role": None,
+            "body": "",
+            "reason": "no_whatsapp_messages",
+        }
     last = wa[0]
-    sender = last.get("sender")
-    # Best-effort contact id resolution from the conversation list
     body, media_type = _extract_body(last)
+    role = _classify_role(last)
     return {
         "message_id": last.get("_id") or last.get("id"),
-        "sender": sender,
+        "sender": last.get("sender"),
         "body": body,
         "media_type": media_type,
         "created_at": last.get("createdAt") or last.get("created_at"),
         "raw_type": last.get("type"),
+        "role": role,
+        "is_internal": role == "agent",
     }
 
 
@@ -208,11 +249,7 @@ def thread(cid: str, limit: int = 10) -> list[dict]:
     out: list[dict] = []
     for m in reversed(wa):  # oldest -> newest
         body, media_type = _extract_body(m)
-        contact_id = (m.get("contact") or {}).get("_id", "")
-        sender = m.get("sender", "")
-        role = "customer" if sender and contact_id and sender == contact_id else (
-            "customer" if (m.get("whatsapp") or {}).get("from") and not (m.get("user") or m.get("userId")) else "agent"
-        )
+        role = _classify_role(m)
         out.append({
             "message_id": m.get("_id") or m.get("id"),
             "created_at": m.get("createdAt") or m.get("created_at"),
