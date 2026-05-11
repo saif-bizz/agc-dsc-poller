@@ -209,12 +209,12 @@ def last_actionable(cid: str) -> dict:
     }
 
 
-def send(cid: str, phone: str, body: str) -> dict:
+def send(cid: str, phone: str, body: str, contact_name: str = "") -> dict:
     """Send a free-text WhatsApp reply. Honours DRY_RUN env var."""
     dry_run = (os.environ.get("DRY_RUN", "true").lower() == "true")
     payload = {
         "conversationId": cid,
-        "phone": phone,
+        "recipient": {"name": contact_name or phone, "phone": phone},
         "type": "text",
         "text": {"body": body},
     }
@@ -323,6 +323,7 @@ def main() -> None:
     s.add_argument("cid")
     s.add_argument("phone")
     s.add_argument("body")
+    s.add_argument("--contact-name", default="")
 
     s = sub.add_parser("assign")
     s.add_argument("cid")
@@ -342,7 +343,7 @@ def main() -> None:
         elif args.cmd == "download_media":
             _print(download_media(args.url, args.out_path))
         elif args.cmd == "send":
-            _print(send(args.cid, args.phone, args.body))
+            _print(send(args.cid, args.phone, args.body, getattr(args, "contact_name", "")))
         elif args.cmd == "assign":
             _print(assign(args.cid, args.user_id))
     except Exception as e:
