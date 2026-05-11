@@ -5,6 +5,22 @@ job finishes — there is no continuation.
 
 ---
 
+## STEP 0 — load live rules from the sales lead
+
+```
+python src/feedback.py read_rules > /tmp/live_rules.md
+```
+
+If the file is non-empty, **read it now** with the Read tool and treat
+its contents as AUTHORITATIVE for the rest of this tick. These are
+directives from the sales lead that override anything in
+`prompt/sara-system.md` or `prompt/brand-snippet.md` when they conflict.
+Newer entries override older entries on the same topic.
+
+If the file is empty (no feedback captured yet), continue normally.
+
+---
+
 ## STEP 1 — list unassigned conversations
 
 ```
@@ -12,6 +28,32 @@ python src/gallabox.py list_open_unassigned --limit 100
 ```
 
 ## STEP 2 — for each conversation (cap at MAX_THREADS_PER_TICK = 10)
+
+### a0. Sales-lead feedback short-circuit (run BEFORE anything else)
+
+For each conversation, get the contact phone (E.164) from the
+`list_open_unassigned` payload (`contact.phone`) and check the whitelist:
+
+```
+python src/feedback.py is_feedback "<e164_phone>"
+```
+
+If `is_feedback=true`, this is the sales lead leaving a course-correcting
+note for Sara — **NOT a customer**. Do all of the following and then move
+to the next CID:
+
+1. Fetch the latest WhatsApp message body for context:
+   `python src/gallabox.py last_actionable <cid>` → take `.body`.
+2. Capture the feedback into the live-rules KV key:
+   ```
+   python src/feedback.py capture <cid> "<e164_phone>" "<body>"
+   ```
+3. Assign the conversation to `$ESCALATION_USER_ID` so it leaves the
+   unassigned queue (`python src/gallabox.py assign <cid> $ESCALATION_USER_ID`).
+4. **DO NOT draft a reply. DO NOT send anything to the sales lead.** His
+   feedback landed; he doesn't need a bot acknowledgement.
+
+Then `continue` to the next CID. Skip steps a–i below for this CID.
 
 ### a. Fetch the recent WhatsApp thread (oldest -> newest, up to 10 msgs)
 

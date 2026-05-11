@@ -59,6 +59,12 @@ jobs:
       # --- Floor-team escalation user (Gallabox userId) ---
       ESCALATION_USER_ID: ${{ secrets.ESCALATION_USER_ID }}
 
+      # --- Sales-lead feedback channel ---
+      # Comma-separated E.164 numbers whose messages are treated as
+      # AUTHORITATIVE feedback (auto-promoted into live rules) instead of
+      # being drafted as customer replies. See src/feedback.py.
+      FEEDBACK_PHONES: ${{ secrets.FEEDBACK_PHONES }}
+
       # --- Runtime flags ---
       # Repo secret default. workflow_dispatch input below can override per-run.
       DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || secrets.DRY_RUN }}
