@@ -97,7 +97,7 @@ people get tagged:
 
 | Category | Use for | Tagged |
 |---|---|---|
-| `inventory` | "Do we have X in stock?", quantity-on-hand, "is this size available?", anything that needs the warehouse/stock list | Shameer, Bala, Shibin |
+| `inventory` | **Stock questions only.** "Do we have X in stock?", quantity-on-hand, "is this size still available?", "when does X come back in stock?". Nothing else — questions about a product's specs, varieties, care, pricing, or recommendations are NOT inventory questions even if they mention stock in passing. | Shameer, Bala, Shibin |
 | `product` | Variety/cultivar questions, plant care, product fit recommendations, AND **price/quote questions you can't answer from Shopify** — bulk/B2B quotes, project pricing, bespoke or off-catalogue items, "best price" negotiation, items that aren't on the website. Abbas and Rise are the sales team — pricing decisions land with them. | Rise, Abbas |
 | `logistics` | Delivery windows, slot timing, route questions, "can you deliver to X area by Y date" | Murad |
 
@@ -133,7 +133,9 @@ Rules for the bridge note body:
   written in the floor team's voice (what would YOU ask a colleague
   who has the stock list in hand?).
 - Always pass `--category`. If you genuinely cannot tell which category
-  fits (rare — most questions fit one cleanly), default to `inventory`.
+  fits (rare — most questions fit one cleanly), default to `product`
+  (Rise + Abbas can re-route from there). Never default to `inventory`:
+  the inventory team only handles stock-level questions.
 
 Do NOT include in the bridge note:
 - Customer name
