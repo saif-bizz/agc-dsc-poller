@@ -1,0 +1,95 @@
+name: Debug Queue State
+
+# One-off diagnostic — lists the current unassigned queue, classifies the
+# last sender of each thread (is_internal yes/no), and dumps the most recent
+# audit decisions. Use to verify Sara isn't starving on already-replied
+# threads at the head of the queue.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      GALLABOX_API_KEY: ${{ secrets.GALLABOX_API_KEY }}
+      GALLABOX_API_SECRET: ${{ secrets.GALLABOX_API_SECRET }}
+      GALLABOX_ACCOUNT_ID: ${{ secrets.GALLABOX_ACCOUNT_ID }}
+      GALLABOX_CHANNEL_ID: ${{ secrets.GALLABOX_CHANNEL_ID }}
+      GALLABOX_API_BASE: https://server.gallabox.com/devapi
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+      FEEDBACK_PHONES: ${{ secrets.FEEDBACK_PHONES }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Dump unassigned queue with role classification
+        run: |
+          python - <<'PY'
+          import os, sys, json
+          sys.path.insert(0, 'src')
+          import gallabox, audit, feedback
+
+          conv = gallabox.list_open_unassigned(limit=50)
+          print(f"=== UNASSIGNED QUEUE: {len(conv)} ===")
+          print(f"{'IDX':<4} {'CID':<26} {'PHONE':<16} {'IS_INTERNAL':<12} {'IS_FEEDBACK':<12} {'LAST_BODY'}")
+          internal_at_head = 0
+          first_customer_at = None
+          for i, c in enumerate(conv[:25]):
+              cid = c.get('_id') or c.get('id') or ''
+              phone = (c.get('contact') or {}).get('phone', '')
+              try:
+                  la = gallabox.last_actionable(cid)
+              except Exception as e:
+                  print(f"{i:<4} {cid[-12:]:<26} ERR: {e}")
+                  continue
+              is_int = la.get('is_internal', False)
+              fb = feedback.is_feedback(phone).get('is_feedback', False)
+              body = (la.get('body') or '')[:50].replace('\n',' ')
+              if is_int and first_customer_at is None:
+                  internal_at_head += 1
+              elif not is_int and first_customer_at is None:
+                  first_customer_at = i
+              print(f"{i:<4} {cid[-20:]:<26} {phone[-12:]:<16} {str(is_int):<12} {str(fb):<12} {body}")
+          print()
+          print(f"INTERNAL-LAST AT HEAD OF QUEUE: {internal_at_head}")
+          print(f"FIRST CUSTOMER-LAST CONVERSATION INDEX: {first_customer_at}")
+
+          print()
+          print("=== RECENT AUDIT ROWS (last 30) ===")
+          # Audit keys are time-sorted: audit:YYYY-MM-DDTHH-MM-SSZ:<cid>
+          import datetime as dt
+          today = dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d')
+          yesterday = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).strftime('%Y-%m-%d')
+          keys = []
+          for d in (today, yesterday):
+              keys += audit.list_keys(f'audit:{d}', limit=200)
+          keys.sort(key=lambda k: k['name'], reverse=True)
+          from collections import Counter
+          decisions = Counter()
+          for k in keys:
+              try:
+                  v = json.loads(audit.read(k['name']))
+                  decisions[v.get('decision','?')] += 1
+              except: pass
+          print("Decision tally (last 24-48h):")
+          for d,c in decisions.most_common():
+              print(f"  {d}: {c}")
+          print()
+          print("Most recent 15 rows:")
+          for k in keys[:15]:
+              try:
+                  v = json.loads(audit.read(k['name']))
+                  ts = k['name'].split(':')[1]
+                  cid = (v.get('cid','') or '')[-8:]
+                  print(f"  {ts}  cid…{cid}  {v.get('decision'):<22} {(v.get('reason') or '')[:60]}")
+              except Exception as e:
+                  print(f"  ERR {k['name']}: {e}")
+          PY
