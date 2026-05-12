@@ -112,11 +112,39 @@ def _unwrap_list(payload, keys=("conversations", "items", "messages", "data")) -
 # Public commands
 # ---------------------------------------------------------------------------
 
-def list_open_unassigned(limit: int = 100) -> list[dict]:
-    """AXIS B: list OPEN conversations whose assigneeId is null."""
-    data = _request("/conversations", params={"limit": limit, "status": "OPEN", "sort": "-updatedAt"})
+def list_open_unassigned(limit: int = 100, exclude_internal_last: bool = False) -> list[dict]:
+    """AXIS B: list OPEN conversations whose assigneeId is null.
+
+    When `exclude_internal_last=True`, also drop any conversation whose
+    most recent WhatsApp message was sent from our side (Sara's own prior
+    reply, a teammate's reply, a template send). This prevents Sara from
+    re-walking already-answered threads every tick — she should only
+    spend turns on threads where the customer is actually waiting on her.
+
+    Fetches 2x the limit when filtering to leave headroom after drops."""
+    fetch_limit = limit * 2 if exclude_internal_last else limit
+    data = _request("/conversations", params={"limit": fetch_limit, "status": "OPEN", "sort": "-updatedAt"})
     items = _unwrap_list(data)
-    return [c for c in items if not c.get("assigneeId")]
+    unassigned = [c for c in items if not c.get("assigneeId")]
+    if not exclude_internal_last:
+        return unassigned[:limit]
+    kept: list[dict] = []
+    for c in unassigned:
+        cid = c.get("_id") or c.get("id") or ""
+        if not cid:
+            continue
+        try:
+            la = last_actionable(cid)
+        except Exception:
+            # If we can't classify, keep — Sara's per-thread step 2.g is
+            # the defence-in-depth backstop.
+            kept.append(c)
+            continue
+        if not la.get("is_internal", False):
+            kept.append(c)
+        if len(kept) >= limit:
+            break
+    return kept
 
 
 def messages(cid: str, limit: int = 10) -> list[dict]:
@@ -303,6 +331,8 @@ def main() -> None:
 
     s = sub.add_parser("list_open_unassigned")
     s.add_argument("--limit", type=int, default=100)
+    s.add_argument("--exclude-internal-last", action="store_true",
+                   help="Drop conversations whose most recent WhatsApp message was outbound from us.")
 
     s = sub.add_parser("messages")
     s.add_argument("cid")
@@ -333,7 +363,7 @@ def main() -> None:
 
     try:
         if args.cmd == "list_open_unassigned":
-            _print(list_open_unassigned(args.limit))
+            _print(list_open_unassigned(args.limit, getattr(args, "exclude_internal_last", False)))
         elif args.cmd == "messages":
             _print(messages(args.cid, args.limit))
         elif args.cmd == "last_actionable":

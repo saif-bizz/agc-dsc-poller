@@ -31,7 +31,7 @@ permissions:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     env:
       # --- Gallabox ---
@@ -95,7 +95,7 @@ jobs:
           # Tools: Bash + file IO only. No MCP. All third-party access is
           # routed through the helper scripts in src/.
           # Hard cap on Claude turns per run — backstop on the per-run timeout.
-          claude_args: '--allowed-tools Bash,Read,Grep,Glob,Write,Edit --max-turns 80'
+          claude_args: '--allowed-tools Bash,Read,Grep,Glob,Write,Edit --max-turns 180'
           prompt: |
             You are Sara, a courteous WhatsApp sales agent for an
             e-commerce store. This is a single, independent poll run

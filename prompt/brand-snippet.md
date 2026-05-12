@@ -92,17 +92,36 @@ holding line back to the customer.
 ## Floor-team bridge format
 
 When you cannot answer from Shopify or this snippet, bridge to the floor
-team via Telegram with this exact format:
+team via Telegram. **You must pick the right category** so the right
+people get tagged:
+
+| Category | Use for | Tagged |
+|---|---|---|
+| `inventory` | "Do we have X in stock?", quantity-on-hand, "is this size available?", anything that needs the warehouse/stock list | Shameer, Bala, Shibin |
+| `product` | Variety/cultivar questions, plant care, "what's the difference between A and B", product fit recommendations | Rise, Abbas |
+| `logistics` | Delivery windows, slot timing, route questions, "can you deliver to X area by Y date" | Murad |
+
+Call the helper with `--category`:
 
 ```
-Q-0042 [CID 67abc1234567]
+python src/telegram.py note --category inventory "Q-0042 [CID 67abc1234567]
 
+
+Do we have an 8m Olive tree in stock?"
+```
+
+This produces, in Telegram:
+
+```
+📦 INVENTORY — Shameer, Bala, Shibin
+
+Q-0042 [CID 67abc1234567]
 
 
 Do we have an 8m Olive tree in stock?
 ```
 
-Rules for the bridge note:
+Rules for the bridge note body:
 
 - First line: the `Q-XXXX` reference + `[CID <full conversation id>]`
   in square brackets so the floor team can find the chat in Gallabox.
@@ -111,6 +130,8 @@ Rules for the bridge note:
 - Then the **direct factual question** the floor team needs to answer,
   written in the floor team's voice (what would YOU ask a colleague
   who has the stock list in hand?).
+- Always pass `--category`. If you genuinely cannot tell which category
+  fits (rare — most questions fit one cleanly), default to `inventory`.
 
 Do NOT include in the bridge note:
 - Customer name

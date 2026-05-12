@@ -24,10 +24,19 @@ If the file is empty (no feedback captured yet), continue normally.
 ## STEP 1 — list unassigned conversations
 
 ```
-python src/gallabox.py list_open_unassigned --limit 100
+python src/gallabox.py list_open_unassigned --limit 100 --exclude-internal-last
 ```
 
-## STEP 2 — for each conversation (cap at MAX_THREADS_PER_TICK = 10)
+The `--exclude-internal-last` flag drops any conversation whose most
+recent WhatsApp message was sent from our side (Sara's prior reply, a
+teammate's reply). This ensures Sara only spends turns on threads where
+the customer is actually waiting on her — she does NOT take over from
+the floor team mid-thread, and she does NOT re-walk a conversation she
+already answered before the customer follows up.
+
+Cap your processing at `MAX_THREADS_PER_TICK` from the environment.
+
+## STEP 2 — for each conversation (cap at MAX_THREADS_PER_TICK)
 
 ### a0. Sales-lead feedback short-circuit (run BEFORE anything else)
 

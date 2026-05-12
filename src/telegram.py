@@ -14,8 +14,11 @@ Env vars:
   TELEGRAM_REVIEW_CHAT_ID     required for `review`
 
 CLI:
-  python telegram.py note "free-form text"
-       # post to floor-team channel (genuine bridge)
+  python telegram.py note "free-form text" [--category inventory|product|logistics]
+       # post to floor-team channel (genuine bridge). With --category, the
+       # message is prefixed with a category header that names the
+       # responsible people (Shameer/Bala/Shibin for inventory,
+       # Rise/Abbas for product, Murad for logistics).
   python telegram.py escalate <cid> <customer_name> <phone> <reason>
        # post a structured irate-customer escalation alert
   python telegram.py review <cid> <customer_label> <customer_msg> <drafted_reply>
@@ -60,8 +63,62 @@ def _send(chat_id: str, text: str, parse_mode: str | None = None) -> dict:
         raise RuntimeError(f"telegram_http_{e.code}: {body}") from e
 
 
-def note(text: str) -> dict:
-    return _send(_env("TELEGRAM_CHAT_ID"), text)
+# Floor-team routing by category. Names show up as a header on the bridge
+# note so the right people know to act on it. Push notifications require
+# numeric Telegram user IDs (not phone numbers) — once collected per person
+# (have each member DM @userinfobot and report the ID back), populate the
+# `tg_user_id` field and the renderer will switch from name labels to true
+# @-mentions using HTML parse mode.
+CATEGORY_ROUTES: dict[str, dict] = {
+    "inventory": {
+        "label": "📦 INVENTORY",
+        "members": [
+            {"name": "Shameer", "phone": "+971529295381", "tg_user_id": None},
+            {"name": "Bala", "phone": "+971554042829", "tg_user_id": None},
+            {"name": "Shibin", "phone": "+971586547689", "tg_user_id": None},
+        ],
+    },
+    "product": {
+        "label": "🌿 PRODUCT",
+        "members": [
+            {"name": "Rise", "phone": "+971529905819", "tg_user_id": None},
+            {"name": "Abbas", "phone": "+971544664556", "tg_user_id": None},
+        ],
+    },
+    "logistics": {
+        "label": "🚚 LOGISTICS / DELIVERY",
+        "members": [
+            {"name": "Murad", "phone": "+971581885899", "tg_user_id": None},
+        ],
+    },
+}
+
+
+def _render_route_header(category: str | None) -> tuple[str, str | None]:
+    """Returns (header_text, parse_mode). parse_mode is 'HTML' when at
+    least one member has a tg_user_id (true @-mention) — falls back to
+    None (plain text + name labels) when IDs aren't populated yet."""
+    if not category:
+        return "", None
+    route = CATEGORY_ROUTES.get(category.lower())
+    if not route:
+        return "", None
+    members = route["members"]
+    has_ids = any(m.get("tg_user_id") for m in members)
+    if has_ids:
+        tags = " ".join(
+            (f'<a href="tg://user?id={m["tg_user_id"]}">{m["name"]}</a>'
+             if m.get("tg_user_id") else m["name"])
+            for m in members
+        )
+        return f"<b>{route['label']}</b> — {tags}\n\n", "HTML"
+    names = ", ".join(m["name"] for m in members)
+    return f"{route['label']} — {names}\n\n", None
+
+
+def note(text: str, category: str | None = None) -> dict:
+    header, parse_mode = _render_route_header(category)
+    return _send(_env("TELEGRAM_CHAT_ID"), header + text, parse_mode=parse_mode)
 
 
 def escalate(cid: str, name: str, phone: str, reason: str) -> dict:
@@ -95,6 +152,8 @@ def main() -> None:
 
     s = sub.add_parser("note")
     s.add_argument("text")
+    s.add_argument("--category", choices=sorted(CATEGORY_ROUTES.keys()), default=None,
+                   help="Floor-team route. Determines who is tagged in the bridge note.")
 
     s = sub.add_parser("escalate")
     s.add_argument("cid")
@@ -111,7 +170,7 @@ def main() -> None:
     args = ap.parse_args()
     try:
         if args.cmd == "note":
-            _print(note(args.text))
+            _print(note(args.text, getattr(args, "category", None)))
         elif args.cmd == "escalate":
             _print(escalate(args.cid, args.name, args.phone, args.reason))
         elif args.cmd == "review":
