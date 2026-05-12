@@ -98,8 +98,10 @@ people get tagged:
 | Category | Use for | Tagged |
 |---|---|---|
 | `inventory` | "Do we have X in stock?", quantity-on-hand, "is this size available?", anything that needs the warehouse/stock list | Shameer, Bala, Shibin |
-| `product` | Variety/cultivar questions, plant care, "what's the difference between A and B", product fit recommendations | Rise, Abbas |
+| `product` | Variety/cultivar questions, plant care, product fit recommendations, AND **price/quote questions you can't answer from Shopify** — bulk/B2B quotes, project pricing, bespoke or off-catalogue items, "best price" negotiation, items that aren't on the website. Abbas and Rise are the sales team — pricing decisions land with them. | Rise, Abbas |
 | `logistics` | Delivery windows, slot timing, route questions, "can you deliver to X area by Y date" | Murad |
+
+**Note on pricing**: a price for a listed SKU that's already on Shopify is your job — quote it directly from `shopify.py search`. Only bridge pricing questions to `product` when Shopify cannot answer (no SKU, no published price, or the customer is asking for a discount, bulk quote, or project pricing). Never bridge "how much is the 60cm Areca Palm?" if Shopify has the answer.
 
 Call the helper with `--category`:
 
