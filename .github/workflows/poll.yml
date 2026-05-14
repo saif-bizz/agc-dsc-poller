@@ -65,6 +65,13 @@ jobs:
       # being drafted as customer replies. See src/feedback.py.
       FEEDBACK_PHONES: ${{ secrets.FEEDBACK_PHONES }}
 
+      # --- Media proxy (Phase 2: floor-team photo relay) ---
+      # Base URL of the agc-dsc-media-proxy Cloudflare Worker, e.g.
+      # https://agc-dsc-media-proxy.agc-ops.workers.dev. The HMAC secret
+      # MUST match the one set on the worker via wrangler secret put.
+      MEDIA_PROXY_BASE_URL: ${{ secrets.MEDIA_PROXY_BASE_URL }}
+      MEDIA_HMAC_SECRET: ${{ secrets.MEDIA_HMAC_SECRET }}
+
       # --- Runtime flags ---
       # Repo secret default. workflow_dispatch input below can override per-run.
       DRY_RUN: ${{ github.event.inputs.dry_run_override != '' && github.event.inputs.dry_run_override || secrets.DRY_RUN }}

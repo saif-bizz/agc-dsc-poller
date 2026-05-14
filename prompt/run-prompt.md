@@ -80,19 +80,51 @@ For each reply:
 7. Audit: `python src/audit.py write_audit <cid> SENT "floor_team_followup"
    --meta '{"q_ref":"<q_ref>","match_source":"<source>","run_id":"<github.run_id>"}'`
 
-### If `matched: true` and `media: {kind: "photo"|...}` (Phase 1: ack only)
+### If `matched: true` and `media: {kind: "photo"|"document"|"video"}`
 
-Phase 2 will auto-forward photos via Gallabox. For now:
+Sara relays the media to the customer via Gallabox using a short-lived
+signed URL through the `agc-dsc-media-proxy` Cloudflare Worker. The
+worker fetches the file from Telegram server-side; the bot token is
+never exposed to Gallabox or Meta.
 
 1. Re-fetch the customer thread + extract phone (as above).
-2. Draft a follow-up that paraphrases any caption text + offers to send
-   the photos: "We have photos of the [item] ready — would you like me
-   to send them through?"
-3. QC, re-check is_internal, send via Gallabox.
-4. Audit with `decision=SENT reason=floor_team_followup_photo_pending`.
-5. **Also** post a Telegram note (no category, no cid) reminding the
-   floor team that the photo isn't auto-forwarded yet:
-   `python src/telegram.py note "📷 Photo for CID <cid> is queued — Phase 2 (auto-forward) not yet live; please WhatsApp the customer directly if urgent."`
+2. Generate a signed media-proxy URL (10 min default TTL) — pass the
+   `file_id` from the reply's `media` block:
+   ```
+   python src/media.py sign "<file_id>" --ttl-seconds 600
+   ```
+   The output is a single URL line. Capture it.
+3. Draft a short caption in **Sara's voice** that paraphrases the floor
+   team's text (their caption + any separate text reply on the same
+   bridge). Keep it under 1024 chars (WhatsApp caption limit). Examples:
+   - Floor team: "These are the snow white pebbles in 1-2cm size."
+   - Sara caption: "Here are the snow white pebbles in 1–2 cm size that
+     we have in stock. Would you like to know the price per kg or
+     arrange delivery?"
+4. Run Layer-1 QC on the caption text only
+   (`python src/qc.py post_check ...`).
+5. Re-check the conversation is still customer-last
+   (`python src/gallabox.py last_actionable <cid>` → `is_internal: false`).
+6. **For `kind: "photo"`** — send via the image endpoint:
+   ```
+   python src/gallabox.py send_image <cid> <phone> "<signed_url>" \
+     --caption "<caption_text>"
+   ```
+7. **For `kind: "document"` or `"video"`** — Phase 2 covers photos only.
+   Fall back to a text-only follow-up that paraphrases the caption +
+   offers to share the file: "We have a [PDF/video] of the [item] ready
+   — would you like me to share it?". Audit
+   `decision=SENT reason=floor_team_followup_doc_or_video_pending`.
+8. Audit successful image send:
+   ```
+   python src/audit.py write_audit <cid> SENT "floor_team_photo_relayed" \
+     --meta '{"q_ref":"<q_ref>","file_id":"<file_id>","run_id":"<github.run_id>"}'
+   ```
+9. **Failure handling**: if `send_image` returns an error (e.g. 24h
+   window expired, Gallabox rejects the URL), do NOT loop. Fall back to
+   text-only:
+   `python src/gallabox.py send <cid> <phone> "<caption_text>"` and
+   audit with `reason=floor_team_followup_photo_send_failed_text_fallback`.
 
 ### If `matched: false`
 

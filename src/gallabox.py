@@ -252,6 +252,32 @@ def send(cid: str, phone: str, body: str, contact_name: str = "") -> dict:
     return _request("/messages/whatsapp", method="POST", body=payload)
 
 
+def send_image(cid: str, phone: str, image_url: str, caption: str | None = None,
+               contact_name: str = "") -> dict:
+    """Send an image WhatsApp reply by URL. The URL must be publicly
+    fetchable by Meta's media servers (use media.py sign_url to wrap a
+    Telegram file_id via the agc-dsc-media-proxy worker). Honours DRY_RUN.
+
+    WhatsApp constraints:
+      - Caption max 1024 chars (Gallabox returns 4xx if violated).
+      - 24h messaging window applies — calling outside the window returns
+        an error from Gallabox; caller should fall back to text-only.
+    """
+    dry_run = (os.environ.get("DRY_RUN", "true").lower() == "true")
+    image_block: dict = {"link": image_url}
+    if caption:
+        image_block["caption"] = caption
+    payload = {
+        "conversationId": cid,
+        "recipient": {"name": contact_name or phone, "phone": phone},
+        "type": "image",
+        "image": image_block,
+    }
+    if dry_run:
+        return {"action": "DRY_RUN", "would_send": payload}
+    return _request("/messages/whatsapp", method="POST", body=payload)
+
+
 def _extract_media_path(msg: dict) -> str | None:
     """Return the public Gallabox file URL for an image/document/video, if any."""
     wa = msg.get("whatsapp") or {}
@@ -355,6 +381,13 @@ def main() -> None:
     s.add_argument("body")
     s.add_argument("--contact-name", default="")
 
+    s = sub.add_parser("send_image")
+    s.add_argument("cid")
+    s.add_argument("phone")
+    s.add_argument("image_url")
+    s.add_argument("--caption", default=None)
+    s.add_argument("--contact-name", default="")
+
     s = sub.add_parser("assign")
     s.add_argument("cid")
     s.add_argument("user_id")
@@ -374,6 +407,10 @@ def main() -> None:
             _print(download_media(args.url, args.out_path))
         elif args.cmd == "send":
             _print(send(args.cid, args.phone, args.body, getattr(args, "contact_name", "")))
+        elif args.cmd == "send_image":
+            _print(send_image(args.cid, args.phone, args.image_url,
+                              getattr(args, "caption", None),
+                              getattr(args, "contact_name", "")))
         elif args.cmd == "assign":
             _print(assign(args.cid, args.user_id))
     except Exception as e:
