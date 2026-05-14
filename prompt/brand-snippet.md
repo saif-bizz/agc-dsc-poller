@@ -103,10 +103,16 @@ people get tagged:
 
 **Note on pricing**: a price for a listed SKU that's already on Shopify is your job — quote it directly from `shopify.py search`. Only bridge pricing questions to `product` when Shopify cannot answer (no SKU, no published price, or the customer is asking for a discount, bulk quote, or project pricing). Never bridge "how much is the 60cm Areca Palm?" if Shopify has the answer.
 
-Call the helper with `--category`:
+Call the helper with `--category`, `--cid`, and `--q-ref` (all three
+required so the floor team's reply can be matched back to this customer
+thread):
 
 ```
-python src/telegram.py note --category inventory "Q-0042 [CID 67abc1234567]
+python src/telegram.py note \
+  --category inventory \
+  --cid 67abc1234567 \
+  --q-ref Q-0042 \
+  "Q-0042 [CID 67abc1234567]
 
 
 Do we have an 8m Olive tree in stock?"
@@ -136,6 +142,16 @@ Rules for the bridge note body:
   fits (rare — most questions fit one cleanly), default to `product`
   (Rise + Abbas can re-route from there). Never default to `inventory`:
   the inventory team only handles stock-level questions.
+- Always pass `--cid` and `--q-ref` so the floor team's reply (using
+  Telegram's reply-to gesture) can be auto-matched back to this customer
+  thread by `telegram.py fetch_replies`. Without these flags, the bridge
+  goes one-way: the floor team's answer reaches Telegram but never
+  reaches the customer.
+
+After posting the bridge, send the customer a brief holding line:
+"Let me check that and come back to you shortly." Then on the next
+tick, STEP 1.5 of the workflow will pick up any floor-team reply to
+your bridge and draft the follow-up automatically.
 
 Do NOT include in the bridge note:
 - Customer name

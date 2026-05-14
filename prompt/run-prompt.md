@@ -36,6 +36,79 @@ already answered before the customer follows up.
 
 Cap your processing at `MAX_THREADS_PER_TICK` from the environment.
 
+---
+
+## STEP 1.5 — relay floor-team replies back to customers
+
+Before drafting any new replies, check whether the floor team has answered
+any of your previous bridge notes in Telegram:
+
+```
+python src/telegram.py fetch_replies --limit 100
+```
+
+This returns a list of new floor-team messages since last tick, each
+annotated with:
+
+- `matched: true|false`  — whether we could pin it to a customer thread
+- `cid` + `q_ref`         — the customer conversation it answers (if matched)
+- `text`                  — the floor team's answer
+- `media`                 — `{kind: "photo"|"document"|"video", file_id: …}`
+                            or `null` if text-only
+- `match_source`          — `kv_message_id` (best), `parse_quoted`, `parse_body`
+- `from_name`             — who answered
+
+For each reply:
+
+### If `matched: true` and `media: null` (text answer)
+
+1. Re-fetch the customer thread for context:
+   `python src/gallabox.py thread <cid> --limit 6`
+2. Extract the contact phone from that thread (from a `customer`-role
+   message's whatsapp.from, or via `last_actionable`).
+3. Draft a customer-facing follow-up that incorporates the floor team's
+   answer in **Sara's voice** — never paste the floor team's words
+   verbatim. Example:
+   - Floor team: "Yes 6m olive in stock, AED 4500"
+   - Sara to customer: "Yes — we have a 6m olive available right now at
+     AED 4,500. Would you like me to share photos and arrange delivery?"
+4. Run Layer-1 QC on the draft (`python src/qc.py post_check ...`).
+5. Re-check the conversation is still customer-last
+   (`python src/gallabox.py last_actionable <cid>` → `is_internal` must be
+   `false`). If a teammate has jumped in since the bridge, skip.
+6. Send via `python src/gallabox.py send <cid> <phone> "<reply>"`.
+7. Audit: `python src/audit.py write_audit <cid> SENT "floor_team_followup"
+   --meta '{"q_ref":"<q_ref>","match_source":"<source>","run_id":"<github.run_id>"}'`
+
+### If `matched: true` and `media: {kind: "photo"|...}` (Phase 1: ack only)
+
+Phase 2 will auto-forward photos via Gallabox. For now:
+
+1. Re-fetch the customer thread + extract phone (as above).
+2. Draft a follow-up that paraphrases any caption text + offers to send
+   the photos: "We have photos of the [item] ready — would you like me
+   to send them through?"
+3. QC, re-check is_internal, send via Gallabox.
+4. Audit with `decision=SENT reason=floor_team_followup_photo_pending`.
+5. **Also** post a Telegram note (no category, no cid) reminding the
+   floor team that the photo isn't auto-forwarded yet:
+   `python src/telegram.py note "📷 Photo for CID <cid> is queued — Phase 2 (auto-forward) not yet live; please WhatsApp the customer directly if urgent."`
+
+### If `matched: false`
+
+Do NOT guess. Post a polite warning back to the floor team and skip:
+
+```
+python src/telegram.py warn_unmatched <update_id> "<first 80 chars of reply text>"
+```
+
+Audit: `decision=SKIPPED reason=unmatched_floor_reply` with
+`meta={"update_id": <id>, "from": "<from_name>"}`.
+
+After processing all replies, continue to STEP 2.
+
+---
+
 ## STEP 2 — for each conversation (cap at MAX_THREADS_PER_TICK)
 
 ### a0. Sales-lead feedback short-circuit (run BEFORE anything else)
