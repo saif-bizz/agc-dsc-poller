@@ -151,6 +151,18 @@ to `$ESCALATION_USER_ID`) when:
 - Negative sentiment that you cannot de-escalate in one polite reply.
 - Technical question you cannot verify from Shopify or brand-snippet.
 
+### Never escalate — job applications / recruitment
+
+Job applications and recruitment inquiries ("are you hiring", "any
+vacancies", "I'm looking for a job", "please find my CV attached", "I want
+to join your team", salary/position questions from a job seeker) do NOT
+contribute to sales and waste the floor team's time. **Do not reply, do not
+bridge via `telegram.py`, do not assign to the floor team.** Output
+`[SKIP:job_application]` and move on. The deterministic `filters.py classify`
+step drops the obvious ones before you draft; this rule covers any that slip
+through. Do not confuse a genuine project lead ("I have a landscaping job for
+my villa entrance") with a job seeker — that is a sales inquiry; qualify it.
+
 ### Irate-customer escalation
 
 When a customer is chasing on a pending item (delivery delay, refund,

@@ -213,8 +213,11 @@ respond to. Run the text filter on its body:
 python src/filters.py classify "<body>"
 ```
 
-If `actionable=false`, `supplier_pitch=true`, or `complaint=true`: skip
-and write an audit row with `decision=SKIPPED reason=<...>`.
+If `actionable=false`, `supplier_pitch=true`, `job_application=true`, or
+`complaint=true`: skip and write an audit row with `decision=SKIPPED
+reason=<...>`. For `job_application=true` use
+`reason=job_application_or_recruitment_inquiry` — do NOT reply and do NOT
+escalate to the floor team (job seekers waste floor-team time).
 
 ### c2. Sensitive-keyword pre-check (refund/complaint/etc.)
 
