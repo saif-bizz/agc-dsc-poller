@@ -11,8 +11,11 @@ name: DSC Poller
 
 on:
   schedule:
-    # Every 5 minutes. Adjust to */10 if free-tier minutes become a concern.
-    - cron: '*/15 * * * *'
+    # FALLBACK ONLY (hourly). The primary trigger is the agc-dsc-cron-relay
+    # Cloudflare Worker (MARKETING/scripts/agc-dsc-cron-relay) dispatching
+    # workflow_dispatch every 5 min — GitHub throttled the old */15 schedule
+    # to ~10 runs/day. This hourly cron is a safety net if the relay dies.
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       dry_run_override:
