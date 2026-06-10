@@ -260,12 +260,21 @@ Write the draft to `/tmp/draft_<cid>.txt`.
 
 ### e2. Close the sale (only when the customer has confirmed a purchase)
 
-If — and only if — the conditions in `prompt/sara-system.md` →
+Close ONLY when the conditions in `prompt/sara-system.md` →
 "Closing the sale" are ALL met (exact variant resolved via Shopify this
-run, price quoted AND accepted, total under `$ESCALATION_AOV_THRESHOLD`,
-no draft already created for this CID today), create the draft order
-BEFORE drafting the reply that carries the link:
+run, price quoted AND accepted). The AOV ceiling and the
+one-draft-per-day guard are now ENFORCED IN CODE — you still follow the
+flow, but you cannot bypass them:
 
+**1. Check the per-day lock first** (one draft per conversation per day):
+```
+python src/audit.py check_draft_lock <cid>
+```
+If `{"locked": true}` → a draft was already created for this customer
+today. Do NOT create another. Answer normally / reference the existing
+order; if they need changes, escalate.
+
+**2. Create the draft** (only if not locked):
 ```
 python src/shopify.py draft_order_create \
   --line-item <variant_id>:<qty> [--line-item ...] \
@@ -273,19 +282,29 @@ python src/shopify.py draft_order_create \
   --source-channel whatsapp_direct > /tmp/draft_order_<cid>.json
 ```
 
-Use the returned `invoiceUrl` and `totalPrice` verbatim in the reply
-(see the personal-preparation frame in sara-system.md). Then write an
-audit row immediately:
+**3. Read the result and branch:**
+- `"error"` containing `aov_threshold_unconfigured` → the ceiling isn't
+  set; do NOT close. Escalate to the floor team.
+- `"escalate_required": true` (order at/over the AOV ceiling — `invoiceUrl`
+  is `null`) → do NOT send a checkout link. Escalate per sara-system.md
+  (`telegram.py escalate` + assign to `$ESCALATION_USER_ID`); tell the
+  customer a colleague will finalise their order personally.
+- `"error"` / userErrors → retry once at most; if it fails again, answer
+  without a link and bridge to the floor team.
+- Success with a non-null `invoiceUrl` → **verify the product matches**:
+  the `lineItems[].variant.title`/`sku` in the response MUST match the
+  product you looked up in `/tmp/shopify_<cid>.json`. If it doesn't, the
+  variant id was wrong — do NOT send; re-resolve or escalate. Then use the
+  returned `invoiceUrl` and `totalPrice` verbatim in the reply (see the
+  personal-preparation frame in sara-system.md).
 
+**4. Set the lock + write the audit row** (only after a successful, sent close):
 ```
+python src/audit.py set_draft_lock <cid> --draft-name "<name>"
 python src/audit.py write_audit <cid> DRAFT_CREATED \
-  "customer confirmed purchase" --meta '{"draft":"<name>","total":"<total>","run_id":"<github.run_id>"}'
+  "customer confirmed purchase" \
+  --meta '{"draft":"<name>","total":"<total>","invoice_url":"<invoiceUrl>","run_id":"<github.run_id>"}'
 ```
-
-At/over the AOV threshold → do NOT create a draft; escalate per
-sara-system.md. If `draft_order_create` returns userErrors, do not
-retry more than once — answer the customer without a link and bridge
-to the floor team.
 
 ### f. Run Layer-1 QC on the draft
 

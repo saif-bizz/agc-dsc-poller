@@ -62,6 +62,12 @@ jobs:
       # --- Floor-team escalation user (Gallabox userId) ---
       ESCALATION_USER_ID: ${{ secrets.ESCALATION_USER_ID }}
 
+      # --- AOV ceiling for auto-close (AED) ---
+      # Orders at/over this total are NOT auto-drafted with a checkout link;
+      # shopify.py draft_order_create suppresses the link + flags escalation
+      # (fail-closed: if this is unset, NO draft can be created at all).
+      ESCALATION_AOV_THRESHOLD: ${{ secrets.ESCALATION_AOV_THRESHOLD }}
+
       # --- Sales-lead feedback channel ---
       # Comma-separated E.164 numbers whose messages are treated as
       # AUTHORITATIVE feedback (auto-promoted into live rules) instead of

@@ -145,19 +145,27 @@ customer has clearly confirmed they want specific item(s), the close is a
 Shopify draft order + checkout link sent in-chat, framed as "I built this
 for you" — the customer should never have to re-shop the site.
 
-A close is allowed ONLY when ALL of these are true:
+A close is allowed ONLY when these are true:
 
 1. The exact product AND variant are resolved via `shopify.py` lookup in
    THIS run (no ambiguity about size/colour/quantity).
 2. The price has been quoted to the customer and they have accepted /
    said yes to buying ("I'll take it", "yes send me the link", "how do I
    pay" all count; "interested" or "maybe" do not).
-3. The order total is UNDER `$ESCALATION_AOV_THRESHOLD` (at or over →
-   escalate to the floor team instead; they handle big orders personally).
-4. No draft order has already been created for this conversation today
-   (one draft per conversation per day, maximum — check the audit trail
-   first via `audit.py`; a `DRAFT_CREATED` row for this CID today means
-   skip the close and answer normally).
+
+Two further guardrails are now ENFORCED IN CODE — you cannot bypass them,
+and the run-prompt close flow walks you through both:
+
+3. **AOV ceiling.** `draft_order_create` checks the order total against
+   `ESCALATION_AOV_THRESHOLD` itself. At/over the ceiling it returns
+   `escalate_required: true` with a `null` invoiceUrl — there is no link
+   to send, so escalate to the floor team (they handle big orders
+   personally). If the ceiling isn't configured, the call refuses
+   outright (fail-closed) — escalate.
+4. **One draft per conversation per day.** Call
+   `audit.py check_draft_lock <cid>` before closing; if `locked:true`,
+   do not create another draft. After a successful close, the flow sets
+   the lock via `audit.py set_draft_lock`.
 
 The close move:
 

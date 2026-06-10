@@ -168,6 +168,24 @@ def _variant_gid(vid: str) -> str:
     return vid if vid.startswith("gid://") else f"gid://shopify/ProductVariant/{vid}"
 
 
+def _aov_threshold() -> float:
+    """AED ceiling above which Sara must NOT auto-close — hand to a human.
+
+    FAIL-CLOSED: if ESCALATION_AOV_THRESHOLD is unset or non-numeric, raise.
+    A missing ceiling must mean 'escalate everything', never 'close anything'.
+    """
+    raw = os.environ.get("ESCALATION_AOV_THRESHOLD", "").strip()
+    if not raw:
+        raise RuntimeError(
+            "aov_threshold_unconfigured: ESCALATION_AOV_THRESHOLD env not set — "
+            "refusing to create a draft order. Escalate this order to the floor team."
+        )
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise RuntimeError(f"aov_threshold_invalid:{raw!r}") from e
+
+
 def draft_order_create(
     line_items: list[tuple[str, int]],
     phone: str | None = None,
@@ -176,7 +194,15 @@ def draft_order_create(
     source_channel: str = "whatsapp_direct",
     extra_attrs: list[tuple[str, str]] | None = None,
 ) -> dict:
-    """Create a draft order. DRY_RUN=true (default) -> print-only, no API call."""
+    """Create a draft order. DRY_RUN=true (default) -> print-only, no API call.
+
+    Enforces the AOV escalation ceiling in CODE (not LLM discretion): the
+    threshold must be configured (fail-closed), and any order whose
+    Shopify-computed total is at/over it returns with invoiceUrl suppressed
+    and escalate_required=true — a high-value checkout link can never reach
+    a customer.
+    """
+    threshold = _aov_threshold()  # raises (fail-closed) if unconfigured
     attrs = [
         {"key": "source_channel", "value": source_channel},
         {"key": "created_by", "value": "sara-dsc"},
@@ -221,7 +247,7 @@ def draft_order_create(
             "currency": unit.get("currencyCode"),
             "variant": n.get("variant"),
         })
-    return {
+    result = {
         "id": d.get("id"),
         "name": d.get("name"),
         "invoiceUrl": d.get("invoiceUrl"),
@@ -229,6 +255,22 @@ def draft_order_create(
         "currency": total.get("currencyCode"),
         "lineItems": items,
     }
+
+    # AOV ceiling enforced against Shopify's authoritative total. At/over the
+    # threshold: suppress the checkout link and flag escalation so a human
+    # handles the high-value order. The draft itself stays for them to convert.
+    amt = total.get("amount")
+    try:
+        over = amt is not None and float(amt) >= threshold
+    except (TypeError, ValueError):
+        over = True  # fail-closed: if we can't read the total, don't hand out a link
+    if over:
+        result["invoiceUrl"] = None
+        result["escalate_required"] = True
+        result["escalate_reason"] = (
+            f"order_total_{amt}_at_or_over_aov_threshold_{threshold:g}"
+        )
+    return result
 
 
 def _print(obj) -> None:

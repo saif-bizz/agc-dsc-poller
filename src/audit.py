@@ -122,6 +122,24 @@ def write_audit(cid: str, decision: str, reason: str, meta: dict | None = None, 
     return write(key, envelope, ttl_seconds=ttl_days * 86400)
 
 
+def _draft_lock_key(cid: str) -> str:
+    day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    return f"draft-lock:{cid}:{day}"
+
+
+def check_draft_lock(cid: str) -> dict:
+    """O(1) read — has a draft order already been created for this CID today?"""
+    return {"locked": read(_draft_lock_key(cid)) is not None, "cid": cid}
+
+
+def set_draft_lock(cid: str, draft_name: str = "") -> dict:
+    """Set the one-draft-per-conversation-per-day lock (26h TTL)."""
+    key = _draft_lock_key(cid)
+    write(key, {"draft": draft_name, "ts": dt.datetime.now(dt.timezone.utc).isoformat()},
+          ttl_seconds=26 * 3600)
+    return {"locked": True, "key": key}
+
+
 def _print(obj) -> None:
     json.dump(obj, sys.stdout, ensure_ascii=False, default=str)
     sys.stdout.write("\n")
@@ -148,6 +166,13 @@ def main() -> None:
     s.add_argument("reason")
     s.add_argument("--meta", default="{}")
 
+    s = sub.add_parser("check_draft_lock")
+    s.add_argument("cid")
+
+    s = sub.add_parser("set_draft_lock")
+    s.add_argument("cid")
+    s.add_argument("--draft-name", default="")
+
     args = ap.parse_args()
     try:
         if args.cmd == "write":
@@ -164,6 +189,10 @@ def main() -> None:
             except Exception:
                 meta = {"raw_meta": args.meta}
             _print(write_audit(args.cid, args.decision, args.reason, meta))
+        elif args.cmd == "check_draft_lock":
+            _print(check_draft_lock(args.cid))
+        elif args.cmd == "set_draft_lock":
+            _print(set_draft_lock(args.cid, args.draft_name))
     except Exception as e:
         # Grepable failure marker — audit writes must be LOUD in the
         # Actions log but never fatal to the poller run (exit code is

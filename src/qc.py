@@ -88,12 +88,19 @@ def post_check(body: str, shopify_text: str = "", shipping_block: str = "", cred
     text = body or ""
 
     # 0. Checkout-link integrity: any Shopify draft-order invoice URL in the
-    #    reply MUST match the invoiceUrl returned by a draft_order_create run
-    #    in THIS turn (passed via --draft-file). Prevents fabricated checkout
-    #    links: no draft, no link.
+    #    reply MUST EXACTLY equal the non-null invoiceUrl returned by a
+    #    draft_order_create run in THIS turn (passed via --draft-file).
+    #    Prevents fabricated checkout links: no draft, no link. Exact-match
+    #    (not substring) so a crafted prefix/suffix of the real URL can't pass.
+    allowed_invoice = ""
+    if draft_text:
+        try:
+            allowed_invoice = (json.loads(draft_text) or {}).get("invoiceUrl") or ""
+        except Exception:
+            allowed_invoice = ""  # unparseable draft → no link allowed
     for um in URL_RE.finditer(text):
         url = re.sub(r"[.,;:!)\]'\"]+$", "", um.group(0))
-        if INVOICE_URL_MARKER in url and url not in (draft_text or ""):
+        if INVOICE_URL_MARKER in url and url != allowed_invoice:
             return {
                 "pass": False,
                 "reason": f"invoice_url_without_matching_draft:{url}",
