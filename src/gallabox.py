@@ -237,19 +237,63 @@ def last_actionable(cid: str) -> dict:
     }
 
 
+def _send_whatsapp(payload: dict) -> dict:
+    """POST to the GLOBAL send endpoint /devapi/messages/whatsapp.
+
+    NOT account-scoped — per brand-credentials.md §WhatsApp/Gallabox and the
+    worker's gallabox.ts. (Bug fixed 2026-06-10: the account-scoped path +
+    {conversationId,type,text} envelope never delivered; first live run
+    logged SENT while customers received nothing.)
+    """
+    base = _env("GALLABOX_API_BASE", required=False, default="https://server.gallabox.com/devapi")
+    url = f"{base.rstrip('/')}/messages/whatsapp"
+    headers = {
+        "apiKey": _env("GALLABOX_API_KEY"),
+        "apiSecret": _env("GALLABOX_API_SECRET"),
+        "Content-Type": "application/json",
+    }
+    data = json.dumps(payload).encode("utf-8")
+    last_err: Exception | None = None
+    for _ in range(RETRY_ATTEMPTS):
+        try:
+            req = urllib.request.Request(url, headers=headers, method="POST", data=data)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                out = json.loads(resp.read())
+                # A real send returns an id/status from Gallabox. Surface it so
+                # the caller can put it in the audit row; an empty response is
+                # a FAILURE, not a success.
+                if not out:
+                    return {"error": "empty_send_response", "sent": False}
+                out["sent"] = True
+                return out
+        except urllib.error.HTTPError as e:
+            if e.code >= 500 or e.code == 429:
+                last_err = e
+                time.sleep(RETRY_SLEEP_S)
+                continue
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                pass
+            return {"error": f"http_{e.code}", "detail": err_body, "sent": False}
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            time.sleep(RETRY_SLEEP_S)
+    return {"error": f"send_failed_after_retries:{last_err}", "sent": False}
+
+
 def send(cid: str, phone: str, body: str, contact_name: str = "") -> dict:
     """Send a free-text WhatsApp reply. Honours DRY_RUN env var."""
     dry_run = (os.environ.get("DRY_RUN", "true").lower() == "true")
     payload = {
-        "conversationId": cid,
+        "channelId": _env("GALLABOX_CHANNEL_ID"),
         "recipient": {"name": contact_name or phone, "phone": phone},
-        "type": "text",
-        "text": {"body": body},
+        "whatsapp": {"type": "text", "text": {"body": body}},
     }
     if dry_run:
         return {"action": "DRY_RUN", "would_send": payload}
-    # Gallabox WhatsApp send endpoint shape — same as the worker tool handler.
-    return _request("/messages/whatsapp", method="POST", body=payload)
+    return _send_whatsapp(payload)
 
 
 def send_image(cid: str, phone: str, image_url: str, caption: str | None = None,
@@ -268,14 +312,13 @@ def send_image(cid: str, phone: str, image_url: str, caption: str | None = None,
     if caption:
         image_block["caption"] = caption
     payload = {
-        "conversationId": cid,
+        "channelId": _env("GALLABOX_CHANNEL_ID"),
         "recipient": {"name": contact_name or phone, "phone": phone},
-        "type": "image",
-        "image": image_block,
+        "whatsapp": {"type": "image", "image": image_block},
     }
     if dry_run:
         return {"action": "DRY_RUN", "would_send": payload}
-    return _request("/messages/whatsapp", method="POST", body=payload)
+    return _send_whatsapp(payload)
 
 
 def _extract_media_path(msg: dict) -> str | None:

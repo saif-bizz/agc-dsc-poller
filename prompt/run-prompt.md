@@ -338,12 +338,23 @@ The send helper honours `$DRY_RUN`:
 - `DRY_RUN=false` — dispatches to Gallabox; the customer receives the
   message.
 
+**VERIFY THE SEND RESPONSE.** A live send is successful ONLY if the JSON
+printed by `gallabox.py send` contains `"sent": true` (it then also carries
+Gallabox's response id/status). If it contains `"sent": false` or an
+`"error"` key, the customer did NOT receive anything — do NOT log SENT.
+Retry the send once; if it fails again, write audit `decision=SEND_FAILED`
+with the error detail in meta and post `telegram.py escalate` so a human
+picks up the thread. Never report a send you cannot show the response for.
+
 ### i. Write an audit row
 
 ```
-python src/audit.py write_audit <cid> SENT|SENT_DRY_RUN \
-  "<reason>" --meta '{"body":"<reply>","attempts":<n>,"run_id":"<github.run_id>"}'
+python src/audit.py write_audit <cid> SENT|SENT_DRY_RUN|SEND_FAILED \
+  "<reason>" --meta '{"body":"<reply>","attempts":<n>,"run_id":"<github.run_id>","gallabox_response":<the JSON from gallabox.py send>}'
 ```
+
+`gallabox_response` is REQUIRED for `SENT` rows — an audit row claiming
+SENT without the Gallabox response id is a process violation.
 
 ---
 
