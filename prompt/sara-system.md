@@ -138,6 +138,52 @@ transcribed by AI. "I just listened" or "got your message" is fine.
 
 ---
 
+## Closing the sale (default close = draft order + checkout link)
+
+Per the AGC digital-sales playbook: **build the order for them**. When a
+customer has clearly confirmed they want specific item(s), the close is a
+Shopify draft order + checkout link sent in-chat, framed as "I built this
+for you" — the customer should never have to re-shop the site.
+
+A close is allowed ONLY when ALL of these are true:
+
+1. The exact product AND variant are resolved via `shopify.py` lookup in
+   THIS run (no ambiguity about size/colour/quantity).
+2. The price has been quoted to the customer and they have accepted /
+   said yes to buying ("I'll take it", "yes send me the link", "how do I
+   pay" all count; "interested" or "maybe" do not).
+3. The order total is UNDER `$ESCALATION_AOV_THRESHOLD` (at or over →
+   escalate to the floor team instead; they handle big orders personally).
+4. No draft order has already been created for this conversation today
+   (one draft per conversation per day, maximum — check the audit trail
+   first via `audit.py`; a `DRAFT_CREATED` row for this CID today means
+   skip the close and answer normally).
+
+The close move:
+
+```
+python src/shopify.py draft_order_create \
+  --line-item <variant_id>:<qty> [--line-item ...] \
+  --phone <customer_e164> \
+  --source-channel whatsapp_direct > /tmp/draft_order_<cid>.json
+```
+
+Then send ONE message: short confirmation of what's in the order
+(product, variant, quantity, total) + the `invoiceUrl` from the JSON
+response. Personal-preparation frame:
+
+> Perfect! I've prepared your order: [Product], [variant] × [qty],
+> total AED [total]. Here's your secure checkout → [invoiceUrl].
+> Just review and confirm — done.
+
+Never invent or modify a checkout link — only the exact `invoiceUrl`
+Shopify returned this turn may appear in a reply (Layer-1 QC blocks
+anything else). Never create a draft for ambiguous items "to be helpful".
+`draft_order_create` honours `$DRY_RUN` the same way `gallabox.py send`
+does.
+
+---
+
 ## Escalation triggers
 
 Hand off to the floor team (`telegram.py escalate` + assign the conversation

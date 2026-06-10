@@ -258,6 +258,35 @@ do NOT just say "let me check with the team".
 
 Write the draft to `/tmp/draft_<cid>.txt`.
 
+### e2. Close the sale (only when the customer has confirmed a purchase)
+
+If — and only if — the conditions in `prompt/sara-system.md` →
+"Closing the sale" are ALL met (exact variant resolved via Shopify this
+run, price quoted AND accepted, total under `$ESCALATION_AOV_THRESHOLD`,
+no draft already created for this CID today), create the draft order
+BEFORE drafting the reply that carries the link:
+
+```
+python src/shopify.py draft_order_create \
+  --line-item <variant_id>:<qty> [--line-item ...] \
+  --phone <customer_e164> \
+  --source-channel whatsapp_direct > /tmp/draft_order_<cid>.json
+```
+
+Use the returned `invoiceUrl` and `totalPrice` verbatim in the reply
+(see the personal-preparation frame in sara-system.md). Then write an
+audit row immediately:
+
+```
+python src/audit.py write_audit <cid> DRAFT_CREATED \
+  "customer confirmed purchase" --meta '{"draft":"<name>","total":"<total>","run_id":"<github.run_id>"}'
+```
+
+At/over the AOV threshold → do NOT create a draft; escalate per
+sara-system.md. If `draft_order_create` returns userErrors, do not
+retry more than once — answer the customer without a link and bridge
+to the floor team.
+
 ### f. Run Layer-1 QC on the draft
 
 ```
@@ -265,7 +294,8 @@ python src/qc.py post_check \
   --body-file /tmp/draft_<cid>.txt \
   --shopify-file /tmp/shopify_<cid>.json \
   --shipping-file prompt/brand-snippet.md \
-  --credentials-file prompt/brand-snippet.md
+  --credentials-file prompt/brand-snippet.md \
+  [--draft-file /tmp/draft_order_<cid>.json]   # REQUIRED whenever the reply contains a checkout link
 ```
 
 If `pass=false`: redraft once with the hint, re-run QC. Max 3 attempts.
@@ -322,7 +352,7 @@ python src/audit.py write_audit <cid> SENT|SENT_DRY_RUN \
 After processing all threads, output exactly one line:
 
 ```
-[TICK_SUMMARY] processed=<N> sent=<S> dry_run_drafts=<D> skipped=<K> escalated=<E> qc_blocked=<Q>
+[TICK_SUMMARY] processed=<N> sent=<S> dry_run_drafts=<D> skipped=<K> escalated=<E> qc_blocked=<Q> draft_orders=<O>
 ```
 
 Then stop.

@@ -81,8 +81,24 @@ def _normalise_dirhams(s: str) -> int | None:
         return None
 
 
-def post_check(body: str, shopify_text: str = "", shipping_block: str = "", credentials_text: str = "") -> dict:
+INVOICE_URL_MARKER = "/invoices/"
+
+
+def post_check(body: str, shopify_text: str = "", shipping_block: str = "", credentials_text: str = "", draft_text: str = "") -> dict:
     text = body or ""
+
+    # 0. Checkout-link integrity: any Shopify draft-order invoice URL in the
+    #    reply MUST match the invoiceUrl returned by a draft_order_create run
+    #    in THIS turn (passed via --draft-file). Prevents fabricated checkout
+    #    links: no draft, no link.
+    for um in URL_RE.finditer(text):
+        url = re.sub(r"[.,;:!)\]'\"]+$", "", um.group(0))
+        if INVOICE_URL_MARKER in url and url not in (draft_text or ""):
+            return {
+                "pass": False,
+                "reason": f"invoice_url_without_matching_draft:{url}",
+                "hint": "A checkout/invoice link may only be sent if it is the exact invoiceUrl returned by shopify.py draft_order_create in this turn. Create the draft first and pass its JSON output via --draft-file.",
+            }
 
     # 1. Em-dash
     if EM_DASH_RE.search(text):
@@ -109,7 +125,10 @@ def post_check(body: str, shopify_text: str = "", shipping_block: str = "", cred
                 "hint": f'Remove the absolute-claim word "{w}". Use measured language ("typically", "in most cases") or remove the line.',
             }
 
-    # 4. Price cross-check
+    # 4. Price cross-check — against this turn's Shopify lookups AND (if a
+    #    draft order was created this turn) the draft's line-item/total
+    #    prices, so a quoted draft total must match what Shopify returned.
+    price_corpus = f"{shopify_text}\n{draft_text}"
     for m in PRICE_RE.finditer(text):
         raw = m.group(1) or m.group(2)
         if not raw:
@@ -118,7 +137,7 @@ def post_check(body: str, shopify_text: str = "", shipping_block: str = "", cred
         if dirhams is None:
             continue
         candidates = [str(dirhams), f"{dirhams}.0", f"{dirhams}.00"]
-        if not any(c in shopify_text for c in candidates):
+        if not any(c in price_corpus for c in candidates):
             return {
                 "pass": False,
                 "reason": f"price_not_in_shopify_cache:AED_{dirhams}",
@@ -137,7 +156,12 @@ def post_check(body: str, shopify_text: str = "", shipping_block: str = "", cred
             }
 
     # 7. URL / phone fabrication
-    haystack = f"{credentials_text}\n{shopify_text}"
+    # draft_text (this turn's draft_order_create output) is part of the
+    # haystack so the Shopify-returned invoiceUrl and draft line-item
+    # prices are whitelisted (price check 4 uses shopify_text only — the
+    # caller passes the draft JSON in --shopify-file too when quoting
+    # draft totals, or quotes prices already verified via search).
+    haystack = f"{credentials_text}\n{shopify_text}\n{draft_text}"
     for um in URL_RE.finditer(text):
         url = re.sub(r"[.,;:!)\]'\"]+$", "", um.group(0))
         if url not in haystack:
@@ -191,6 +215,8 @@ def main() -> None:
     s.add_argument("--shopify-file")
     s.add_argument("--shipping-file")
     s.add_argument("--credentials-file")
+    s.add_argument("--draft-file",
+                   help="JSON output of this turn's shopify.py draft_order_create. Required whenever the reply contains a checkout/invoice link.")
 
     args = ap.parse_args()
     if args.cmd == "pre_check":
@@ -202,6 +228,7 @@ def main() -> None:
             shopify_text=_read(args.shopify_file),
             shipping_block=_read(args.shipping_file),
             credentials_text=_read(args.credentials_file),
+            draft_text=_read(args.draft_file),
         ))
 
 
