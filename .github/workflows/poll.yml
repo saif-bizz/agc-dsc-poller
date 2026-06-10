@@ -95,6 +95,27 @@ jobs:
           echo "Triggered by: ${{ github.event_name }}"
           echo "Cron: '${{ github.event.schedule }}'"
 
+      - name: KV audit heartbeat (loud, non-fatal)
+        # Direct curl PUT of tick-heartbeat:<run_id> against the same CF KV
+        # REST path src/audit.py uses. A broken CF_API_TOKEN /
+        # CF_KV_NAMESPACE_ID / CF_ACCOUNT_ID secret shows up as a grepable
+        # [KV_HEARTBEAT] FAIL in every run log instead of failing silently
+        # inside audit.py. Never fails the job.
+        continue-on-error: true
+        run: |
+          KEY="tick-heartbeat:${{ github.run_id }}"
+          HTTP=$(curl -s -o /tmp/hb.json -w "%{http_code}" -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KEY}?expiration_ttl=604800" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "{\"run_id\":\"${{ github.run_id }}\",\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"${{ github.event_name }}\"}")
+          if [ "$HTTP" = "200" ] && grep -q '"success": *true' /tmp/hb.json; then
+            echo "[KV_HEARTBEAT] PASS key=$KEY"
+          else
+            echo "[KV_HEARTBEAT] FAIL http=$HTTP body=$(head -c 300 /tmp/hb.json)"
+            echo "[AUDIT_WRITE_FAILED] kv heartbeat write failed - check CF_API_TOKEN / CF_KV_NAMESPACE_ID / CF_ACCOUNT_ID repo secrets"
+          fi
+
       - name: Run Sara (claude-code-action)
         uses: anthropics/claude-code-action@v1
         with:

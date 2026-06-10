@@ -44,6 +44,10 @@ import urllib.request
 def _env(k: str, required: bool = True, default: str | None = None) -> str:
     v = os.environ.get(k, default)
     if required and not v:
+        # Loud + grepable: a missing CF secret means the whole audit layer
+        # is dead. Non-fatal to the poller (callers ignore our exit code),
+        # but it must be visible in the Actions log.
+        print(f"[AUDIT_WRITE_FAILED] missing_env:{k}", file=sys.stderr)
         print(json.dumps({"error": f"missing_env:{k}"}), file=sys.stderr)
         sys.exit(2)
     return v or ""
@@ -161,6 +165,10 @@ def main() -> None:
                 meta = {"raw_meta": args.meta}
             _print(write_audit(args.cid, args.decision, args.reason, meta))
     except Exception as e:
+        # Grepable failure marker — audit writes must be LOUD in the
+        # Actions log but never fatal to the poller run (exit code is
+        # non-zero, callers treat it as best-effort).
+        print(f"[AUDIT_WRITE_FAILED] {e}", file=sys.stderr)
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
