@@ -54,6 +54,16 @@ try:
 except Exception:  # noqa: BLE001
     _audit_seen = None  # type: ignore
 
+# filters.py owns the deterministic actionable/skip classifier; reused in
+# list_open_unassigned to drop not-actionable customer-last threads BEFORE
+# they reach Sara (otherwise each one is re-audited SKIPPED every */5 tick).
+# Lazy-safe import: a not-actionable thread is only dropped when the classifier
+# is available, so a missing filters module fails open (thread kept).
+try:
+    import filters as _filters  # type: ignore
+except Exception:  # noqa: BLE001
+    _filters = None  # type: ignore
+
 
 def _env(key: str, required: bool = True, default: str | None = None) -> str:
     v = os.environ.get(key, default)
@@ -149,6 +159,18 @@ def list_open_unassigned(limit: int = 100, exclude_internal_last: bool = False) 
             kept.append(c)
             continue
         if la.get("is_internal", False):
+            continue
+        # Not-actionable customer-last drop (KV write-amplification guard).
+        # A bare "thank u" / "ok" / emoji-reaction is customer-last (so the
+        # is_internal drop above does NOT catch it) and never leaves the
+        # unassigned queue, so Sara re-classified it SKIPPED=not_actionable and
+        # wrote a fresh audit row every */5 tick (incident 26-06-2026: one CID
+        # accrued 292 live audit rows this way). filters.is_actionable() is the
+        # same deterministic classifier Sara runs in run-prompt STEP 2.c, so
+        # dropping here changes no reply behaviour: it only stops the thread
+        # from being handed to Sara purely to be re-audited. Fail-open: if the
+        # classifier is unavailable the thread is kept (never lose a real reply).
+        if _filters is not None and not _filters.is_actionable(la.get("body")):
             continue
         # Processed-message watermark (KV write-amplification guard, see
         # audit.set_seen_message_id). A customer-last thread that never leaves
