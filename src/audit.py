@@ -140,6 +140,40 @@ def set_draft_lock(cid: str, draft_name: str = "") -> dict:
     return {"locked": True, "key": key}
 
 
+# ---------------------------------------------------------------------------
+# Per-conversation processed-message watermark (KV write-amplification guard).
+#
+# A stale OPEN-unassigned thread whose last message is the customer's (e.g. a
+# bare "Thank u") never leaves the unassigned queue and is never filtered by
+# --exclude-internal-last (customer is still last sender), so every */5 tick
+# re-classified it SKIPPED and wrote a fresh audit row. ~3-4 such stuck threads
+# x 288 ticks/day exhausted the FREE-tier 1,000 KV writes/day cap (incident
+# 26-06-2026: AGC_DSC_KV measured 1,180 writes/24h, 423 in 9.5h across only 12
+# CIDs, three of them re-audited 114 times each).
+#
+# The watermark stores the last customer message-id we have already emitted for
+# a CID. list_open_unassigned drops a thread whose latest customer message-id
+# equals the stored watermark (nothing new since we last handled it), so a stuck
+# thread is written exactly once instead of every tick. A genuinely new inbound
+# carries a new message-id, misses the watermark, and flows through normally.
+# 7-day TTL auto-cleans abandoned threads.
+# ---------------------------------------------------------------------------
+
+SEEN_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
+def get_seen_message_id(cid: str) -> str | None:
+    """Return the last customer message-id already processed for this CID."""
+    return read(f"seen:{cid}")
+
+
+def set_seen_message_id(cid: str, message_id: str) -> dict:
+    """Record the latest processed customer message-id for this CID (7d TTL)."""
+    key = f"seen:{cid}"
+    write(key, message_id, ttl_seconds=SEEN_TTL_SECONDS)
+    return {"ok": True, "key": key, "message_id": message_id}
+
+
 def _print(obj) -> None:
     json.dump(obj, sys.stdout, ensure_ascii=False, default=str)
     sys.stdout.write("\n")

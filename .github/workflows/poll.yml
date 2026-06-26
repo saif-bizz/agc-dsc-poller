@@ -104,25 +104,39 @@ jobs:
           echo "Triggered by: ${{ github.event_name }}"
           echo "Cron: '${{ github.event.schedule }}'"
 
-      - name: KV audit heartbeat (loud, non-fatal)
-        # Direct curl PUT of tick-heartbeat:<run_id> against the same CF KV
-        # REST path src/audit.py uses. A broken CF_API_TOKEN /
-        # CF_KV_NAMESPACE_ID / CF_ACCOUNT_ID secret shows up as a grepable
-        # [KV_HEARTBEAT] FAIL in every run log instead of failing silently
-        # inside audit.py. Never fails the job.
+      - name: KV audit heartbeat (loud, non-fatal, at most hourly)
+        # Canary PUT against the same CF KV REST path src/audit.py uses. A
+        # broken CF_API_TOKEN / CF_KV_NAMESPACE_ID / CF_ACCOUNT_ID secret shows
+        # up as a grepable [KV_HEARTBEAT] FAIL in the run log instead of failing
+        # silently inside audit.py. Never fails the job.
+        #
+        # WRITE-AMPLIFICATION FIX (26-06-2026): the key was tick-heartbeat:<run_id>
+        # (unique per run) so the */5 relay burned 288 KV writes/day on heartbeats
+        # alone, against the FREE-tier 1,000 writes/day cap. The key is now bucketed
+        # to the hour and only written when that hour's bucket is absent: at most 24
+        # writes/day while still catching a broken-secret regression within the hour.
         continue-on-error: true
         run: |
-          KEY="tick-heartbeat:${{ github.run_id }}"
-          HTTP=$(curl -s -o /tmp/hb.json -w "%{http_code}" -X PUT \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KEY}?expiration_ttl=604800" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data "{\"run_id\":\"${{ github.run_id }}\",\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"${{ github.event_name }}\"}")
-          if [ "$HTTP" = "200" ] && grep -q '"success": *true' /tmp/hb.json; then
-            echo "[KV_HEARTBEAT] PASS key=$KEY"
+          KEY="tick-heartbeat:$(date -u +%FT%H)"
+          # Read-guard: skip the write if this hour's heartbeat already exists
+          # (reads are not the capped operation; writes are).
+          EXISTS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KEY}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}")
+          if [ "$EXISTS" = "200" ]; then
+            echo "[KV_HEARTBEAT] SKIP (hour bucket already written) key=$KEY"
           else
-            echo "[KV_HEARTBEAT] FAIL http=$HTTP body=$(head -c 300 /tmp/hb.json)"
-            echo "[AUDIT_WRITE_FAILED] kv heartbeat write failed - check CF_API_TOKEN / CF_KV_NAMESPACE_ID / CF_ACCOUNT_ID repo secrets"
+            HTTP=$(curl -s -o /tmp/hb.json -w "%{http_code}" -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KEY}?expiration_ttl=604800" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "{\"run_id\":\"${{ github.run_id }}\",\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"${{ github.event_name }}\"}")
+            if [ "$HTTP" = "200" ] && grep -q '"success": *true' /tmp/hb.json; then
+              echo "[KV_HEARTBEAT] PASS key=$KEY"
+            else
+              echo "[KV_HEARTBEAT] FAIL http=$HTTP body=$(head -c 300 /tmp/hb.json)"
+              echo "[AUDIT_WRITE_FAILED] kv heartbeat write failed - check CF_API_TOKEN / CF_KV_NAMESPACE_ID / CF_ACCOUNT_ID repo secrets"
+            fi
           fi
 
       - name: Run Sara (claude-code-action)
