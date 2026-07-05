@@ -429,7 +429,7 @@ def download_media(url: str, out_path: str) -> dict:
 def assign(cid: str, user_id: str) -> dict:
     """Assign a conversation. Honours DRY_RUN."""
     dry_run = (os.environ.get("DRY_RUN", "true").lower() == "true")
-    payload = {"assigneeId": user_id}
+    payload = {"userId": user_id}
     if dry_run:
         return {"action": "DRY_RUN", "would_assign": {"cid": cid, "user_id": user_id}}
     return _request(f"/conversations/{cid}/assign", method="POST", body=payload)
