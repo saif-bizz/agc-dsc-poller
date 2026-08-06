@@ -165,3 +165,29 @@ jobs:
 
             Then execute the workflow described in prompt/run-prompt.md
             exactly. Stop after the [TICK_SUMMARY] line.
+
+      - name: Telegram alert on failure (at most one per hour)
+        # 02-08-2026 -> 06-08-2026 the poller failed every tick for four days
+        # (claude-code-action returned is_error with 0 cost / 1 turn) and the
+        # only signal was ~4,200 unread GitHub notifications. Alert where it
+        # gets read instead. Hour-bucketed through the same KV namespace as the
+        # heartbeat above so a sustained outage costs 24 messages/day, not 288.
+        # ponytail: KV bucket is the rate limiter; swap for a real alert
+        # manager only if this ever needs escalation policies.
+        if: failure()
+        continue-on-error: true
+        run: |
+          KEY="fail-alert:$(date -u +%FT%H)"
+          KV="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/values/${KEY}"
+          EXISTS=$(curl -s -o /dev/null -w "%{http_code}" "$KV" -H "Authorization: Bearer ${CF_API_TOKEN}")
+          if [ "$EXISTS" = "200" ]; then
+            echo "[FAIL_ALERT] SKIP (already alerted this hour)"
+            exit 0
+          fi
+          curl -s -o /dev/null -X PUT "${KV}?expiration_ttl=86400" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" --data '1'
+          curl -s -o /dev/null -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=DSC Poller tick FAILED. No customer replies are going out. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "[FAIL_ALERT] SENT"
