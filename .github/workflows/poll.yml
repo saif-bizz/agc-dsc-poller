@@ -34,7 +34,12 @@ permissions:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Real ticks take 42-58s (n=20, 01-08-2026). The old 15 was 15x that, so
+    # during a GitHub runner-starvation event a job that never gets a runner
+    # squats the dsc-poller concurrency slot for a full 15 min and cancels the
+    # two ticks queued behind it. 5 min = 5x headroom, slot back by the next
+    # boundary. Also the backstop on --max-turns 180.
+    timeout-minutes: 5
 
     env:
       # --- Gallabox ---
